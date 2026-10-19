@@ -39,6 +39,7 @@ const columnIndex = (column) => column.charCodeAt(0) - 65;
 export function createRedTagRepository({ spreadsheetId, sheetNames, technicianSheetName, googleCredentials }) {
     const authOptions = { scopes: [SHEETS_SCOPE] };
     if (googleCredentials) {
+        delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
         authOptions.credentials = googleCredentials;
     }
     const sheetsClient = sheets({ version: "v4", auth: new auth.GoogleAuth(authOptions) });

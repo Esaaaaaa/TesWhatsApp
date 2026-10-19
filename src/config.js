@@ -11,14 +11,19 @@ export function loadConfig(env = process.env) {
     const missingKeys = BASE_REQUIRED_ENV_KEYS.filter((key) => !env[key]?.trim());
 
     let googleCredentials = null;
-    const rawJson = env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
+    let rawJson = env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
     const credentialsPath = env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
+
+    // Jika user mem-paste teks JSON ke GOOGLE_APPLICATION_CREDENTIALS
+    if (!rawJson && credentialsPath?.startsWith("{")) {
+        rawJson = credentialsPath;
+    }
 
     if (rawJson) {
         try {
             googleCredentials = JSON.parse(rawJson);
         } catch (error) {
-            throw new Error(`GOOGLE_SERVICE_ACCOUNT_JSON bukan format JSON yang valid: ${error.message}`);
+            throw new Error(`Kredensial Google Service Account bukan format JSON yang valid: ${error.message}`);
         }
     } else if (!credentialsPath) {
         missingKeys.push("GOOGLE_APPLICATION_CREDENTIALS atau GOOGLE_SERVICE_ACCOUNT_JSON");

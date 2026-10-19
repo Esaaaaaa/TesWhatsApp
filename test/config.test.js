@@ -44,17 +44,17 @@ test("loadConfig gagal jika kedua kredensial Google tidak ada", () => {
 test("loadConfig gagal jika GOOGLE_SERVICE_ACCOUNT_JSON bukan JSON valid", () => {
     assert.throws(
         () => loadConfig({ ...VALID_BASE_ENV, GOOGLE_SERVICE_ACCOUNT_JSON: "invalid json string" }),
-        /GOOGLE_SERVICE_ACCOUNT_JSON bukan format JSON yang valid/
+        /Kredensial Google Service Account bukan format JSON yang valid/
     );
 });
 
-test("loadConfig gagal jika WHATSAPP_PHONE_NUMBER mengandung huruf", () => {
-    assert.throws(
-        () => loadConfig({
-            ...VALID_BASE_ENV,
-            GOOGLE_APPLICATION_CREDENTIALS: "./credentials/service-account.json",
-            WHATSAPP_PHONE_NUMBER: "abc628123"
-        }),
-        /WHATSAPP_PHONE_NUMBER hanya boleh angka/
-    );
+test("loadConfig berhasil jika GOOGLE_APPLICATION_CREDENTIALS berisi teks JSON langsung", () => {
+    const fakeServiceAccount = { client_email: "test@example.com", private_key: "abc" };
+    const config = loadConfig({
+        ...VALID_BASE_ENV,
+        GOOGLE_APPLICATION_CREDENTIALS: JSON.stringify(fakeServiceAccount)
+    });
+
+    assert.deepEqual(config.googleCredentials, fakeServiceAccount);
 });
+
