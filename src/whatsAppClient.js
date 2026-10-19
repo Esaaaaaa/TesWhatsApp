@@ -1,9 +1,7 @@
+import fs from "node:fs";
 import makeWASocket, { DisconnectReason, jidNormalizedUser, useMultiFileAuthState } from "baileys";
 import qrcode from "qrcode-terminal";
 import { logger } from "./logger.js";
-
-// Berisi rahasia sesi WhatsApp
-const AUTH_STATE_DIR = "auth_info";
 
 // Matikan log bawaan Baileys
 const silentBaileysLogger = {
@@ -74,8 +72,14 @@ export async function startWhatsAppClient({ phoneNumber, onMessage, authStateDir
             const statusCode = lastDisconnect?.error?.output?.statusCode;
 
             if (statusCode === DisconnectReason.loggedOut) {
-                logger.error(`Sesi WhatsApp sudah keluar, hapus folder ${authStateDir} lalu jalankan ulang untuk menautkan lagi`);
-                return;
+                logger.error(`Sesi WhatsApp keluar/kedaluwarsa. Membersihkan folder ${authStateDir}...`);
+                try {
+                    fs.rmSync(authStateDir, { recursive: true, force: true });
+                } catch (err) {
+                    logger.error(`Gagal menghapus folder ${authStateDir}: ${err.message}`);
+                }
+                logger.warn("Sesi dibersihkan. Memulai ulang untuk meminta kode pairing baru...");
+                process.exit(1);
             }
 
             // Termasuk restart setelah scan QR pertama
