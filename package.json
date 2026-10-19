@@ -1,0 +1,22 @@
+{
+  "name": "whatsapp-maintenance-automation",
+  "version": "1.0.0",
+  "description": "Closes and reopens Red Tags in Google Sheets from WhatsApp group messages.",
+  "type": "module",
+  "main": "src/index.js",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --env-file=.env src/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@google/genai": "^2.29.1",
+    "@googleapis/sheets": "^18.0.1",
+    "baileys": "^7.0.0-rc14",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
