@@ -1,42 +1,50 @@
 import { auth, sheets } from "@googleapis/sheets";
+import { PAYMENT_STATUS, TASK_STATUS } from "./constants.js";
 
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
-// Rapikan No Tag
-const normalizeTag = (tag) => tag?.trim().toLowerCase() ?? "";
-// Rapikan No WhatsApp ke format 62
+
+// Rapikan nomor WhatsApp ke awalan 62 atau 08
 export const normalizePhone = (phone) => String(phone ?? "").replace(/\D/g, "").replace(/^0/, "62");
 
-// Cocokkan No Tag lengkap atau nomor belakang
-export function isSameTag(storedTag, tagInput) {
-    const stored = normalizeTag(storedTag);
-    const input = normalizeTag(tagInput);
-
-    if (/^\d+$/.test(input)) {
-        const trailingNumber = stored.split("/").pop();
-        return /^\d+$/.test(trailingNumber) && Number(trailingNumber) === Number(input);
-    }
-
-    return stored === input;
+// Format angka ke format rupiah (contoh: 250000 -> 250.000)
+export function formatRupiah(num) {
+    const val = Number(num) || 0;
+    return val.toLocaleString("id-ID");
 }
 
-// Letak kolom tiap sheet
-const SHEET_COLUMNS = {
-    redTag: { tag: "B", closedAt: "N", writes: { M: "solvedBy", N: "closedDate", P: "solution" } },
-    orangeTag: { tag: "D", closedAt: "K", writes: { I: "solution", J: "solvedBy", K: "closedDate" } },
-    workRequest: { tag: "B", closedAt: "I", writes: { I: "closedDate", K: "solvedBy", L: "solution" } }
-};
+// Parsing string angka ke number murni
+export function parseNumber(val) {
+    if (typeof val === "number") return val;
+    if (!val) return 0;
+    const digitsOnly = String(val).replace(/\D/g, "");
+    return Number(digitsOnly) || 0;
+}
 
-// Kolom detail untuk AI, nama field disamakan supaya satu fungsi cari cukup
-const DETAIL_COLUMNS = {
-    redTag: { noTag: "B", tahun: "C", tanggal: "D", equipment: "F", ditemukanOleh: "G", kategori: "I", deskripsi: "J", line: "K", pic: "L", diselesaikanOleh: "M", tglClose: "N", status: "O", penanggulangan: "P", bulan: "R", bulanClose: "S" },
-    orangeTag: { tanggal: "C", noTag: "D", deskripsi: "E", equipment: "F", ditemukanOleh: "G", kategori: "H", penanggulangan: "I", diselesaikanOleh: "J", tglClose: "K", status: "L", department: "M", line: "N", tahun: "O", bulan: "P", bulanClose: "R" },
-    workRequest: { tahun: "A", noTag: "B", deskripsi: "C", department: "D", tanggal: "F", pic: "G", tglClose: "I", status: "J", diselesaikanOleh: "K", penanggulangan: "L", kategori: "M" }
-};
+// Standarisasi ID Tugas (contoh: 't1', 'T01', '1' -> 'T1')
+export function normalizeTaskId(input) {
+    if (!input) return "";
+    const trimmed = String(input).trim().toUpperCase();
+    if (/^\d+$/.test(trimmed)) {
+        return `T${parseInt(trimmed, 10)}`;
+    }
+    const match = trimmed.match(/^T0*(\d+)$/);
+    if (match) {
+        return `T${parseInt(match[1], 10)}`;
+    }
+    return trimmed;
+}
 
-const columnIndex = (column) => column.charCodeAt(0) - 65;
+// Format tanggal hari ini DD-MM-YYYY
+export function getTodayDateString(receivedAt = null) {
+    const date = receivedAt ? new Date(receivedAt) : new Date();
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const year = date.getFullYear();
+    return `${day}-${month}-${year}`;
+}
 
-// Akses sheet Red Tag, Orange Tag, WR, dan teknisi
-export function createRedTagRepository({ spreadsheetId, sheetNames, technicianSheetName, googleCredentials }) {
+// Repository Google Sheets untuk Data Joki Tugas
+export function createTaskRepository({ spreadsheetId, tasksSheetName = "Sheet1", googleCredentials }) {
     const authOptions = { scopes: [SHEETS_SCOPE] };
     if (googleCredentials) {
         delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
@@ -44,55 +52,275 @@ export function createRedTagRepository({ spreadsheetId, sheetNames, technicianSh
     }
     const sheetsClient = sheets({ version: "v4", auth: new auth.GoogleAuth(authOptions) });
 
-    // Diberi kutip karena nama sheet ada spasi
-    const sheetRange = (type, cells) => `'${sheetNames[type]}'!${cells}`;
+    const sheetRange = (cells) => `'${tasksSheetName}'!${cells}`;
 
-    // Ambil nomor dan tanggal close semua baris satu sheet
-    async function listTags(type) {
-        const { tag, closedAt } = SHEET_COLUMNS[type];
-        const response = await sheetsClient.spreadsheets.values.get({ spreadsheetId, range: sheetRange(type, `${tag}:${closedAt}`) });
+    // Ambil semua data tugas dari sheet baris 2 ke bawah
+    // Kolom: A=ID | B=NoWA | C=Tugas | D=TglMasuk | E=Deadline | F=Jam | G=Harga | H=TotalBayar | I=Sisa | J=Status | K=StatusBayar | L=PIC | M=Catatan
+    async function getAllTasks() {
+        const response = await sheetsClient.spreadsheets.values.get({
+            spreadsheetId,
+            range: sheetRange("A2:M")
+        });
         const rows = response.data.values ?? [];
-        const closedAtIndex = columnIndex(closedAt) - columnIndex(tag);
-        return rows.flatMap((row, index) =>
-            row[0] ? [{ rowNumber: index + 1, tagNumber: row[0].trim(), closedAt: row[closedAtIndex] ?? "" }] : []
-        );
+
+        return rows
+            .map((row, index) => {
+                const id = row[0]?.trim() || "";
+                if (!id) return null;
+
+                const price = parseNumber(row[6]);
+                const paid = parseNumber(row[7]);
+                const balance = row[8] !== undefined && row[8] !== "" ? parseNumber(row[8]) : Math.max(0, price - paid);
+
+                return {
+                    rowNumber: index + 2,
+                    id,
+                    clientPhone: row[1]?.trim() || "",
+                    taskTitle: row[2]?.trim() || "",
+                    createdAt: row[3]?.trim() || "",
+                    deadline: row[4]?.trim() || "-",
+                    jam: row[5]?.trim() || "",
+                    price,
+                    paid,
+                    balance,
+                    status: row[9]?.trim() || TASK_STATUS.PROSES,
+                    paymentStatus: row[10]?.trim() || PAYMENT_STATUS.BELUM_BAYAR,
+                    pic: row[11]?.trim() || "-",
+                    notes: row[12]?.trim() || ""
+                };
+            })
+            .filter(Boolean);
     }
 
-    // Isi kolom penanggulangan, PIC, dan tanggal close
-    async function closeTag(type, { rowNumber, ...values }) {
-        const data = Object.entries(SHEET_COLUMNS[type].writes).map(([column, field]) => ({
-            range: sheetRange(type, `${column}${rowNumber}`),
-            values: [[values[field]]]
-        }));
-        await sheetsClient.spreadsheets.values.batchUpdate({
-            spreadsheetId,
-            requestBody: { valueInputOption: "USER_ENTERED", data }
+    // Ambil tugas yang masih aktif (bukan Selesai atau Batal)
+    async function getActiveTasks() {
+        const tasks = await getAllTasks();
+        return tasks.filter((t) => {
+            const st = (t.status || "").toLowerCase();
+            return st !== TASK_STATUS.SELESAI.toLowerCase() && st !== TASK_STATUS.BATAL.toLowerCase();
         });
     }
 
-    // Kosongkan kolom yang diisi saat close
-    async function reopenTag(type, rowNumber) {
-        const ranges = Object.keys(SHEET_COLUMNS[type].writes).map((column) => sheetRange(type, `${column}${rowNumber}`));
-        await sheetsClient.spreadsheets.values.batchClear({ spreadsheetId, requestBody: { ranges } });
+    // Cari satu tugas berdasarkan ID
+    async function findTaskById(idInput) {
+        const tasks = await getAllTasks();
+        const targetId = normalizeTaskId(idInput);
+        return tasks.find((t) => normalizeTaskId(t.id) === targetId) || null;
     }
 
-    // Ambil detail satu sheet untuk AI, baris 1 judul dilewati
-    async function listDetails(type) {
-        const columns = DETAIL_COLUMNS[type];
-        const response = await sheetsClient.spreadsheets.values.get({ spreadsheetId, range: sheetRange(type, "A2:S") });
-        const rows = response.data.values ?? [];
+    // Tambah tugas baru ke Google Sheets
+    async function addTask({ clientPhone, taskTitle, deadline, jam = "", price, paid = 0, pic = "-", notes = "", receivedAt }) {
+        const tasks = await getAllTasks();
 
-        return rows.filter((row) => row[columnIndex(columns.noTag)]).map((row) =>
-            Object.fromEntries(Object.entries(columns).map(([field, column]) => [field, row[columnIndex(column)]]))
+        // Cari nomor ID tugas berikutnya (contoh: max T5 -> T6)
+        let maxNumber = 0;
+        for (const t of tasks) {
+            const match = t.id.match(/^T0*(\d+)$/i);
+            if (match) {
+                const num = parseInt(match[1], 10);
+                if (num > maxNumber) maxNumber = num;
+            }
+        }
+        const newId = `T${maxNumber + 1}`;
+
+        const numPrice = parseNumber(price);
+        const numPaid = parseNumber(paid);
+        const balance = Math.max(0, numPrice - numPaid);
+        const createdAt = getTodayDateString(receivedAt);
+        const paymentStatus = numPaid >= numPrice && numPrice > 0 ? PAYMENT_STATUS.LUNAS : (numPaid > 0 ? PAYMENT_STATUS.DP : PAYMENT_STATUS.BELUM_BAYAR);
+        const status = TASK_STATUS.PROSES;
+        const picClean = pic?.trim() || "-";
+        const notesClean = notes?.trim() || "";
+        const cleanDeadline = deadline?.trim() || "-";
+        const cleanJam = jam?.trim() || "";
+
+        await sheetsClient.spreadsheets.values.append({
+            spreadsheetId,
+            range: sheetRange("A:M"),
+            valueInputOption: "USER_ENTERED",
+            requestBody: {
+                values: [[
+                    newId,
+                    clientPhone,
+                    taskTitle,
+                    createdAt,
+                    cleanDeadline,
+                    cleanJam,
+                    numPrice,
+                    numPaid,
+                    balance,
+                    status,
+                    paymentStatus,
+                    picClean,
+                    notesClean
+                ]]
+            }
+        });
+
+        return {
+            id: newId,
+            clientPhone,
+            taskTitle,
+            createdAt,
+            deadline: cleanDeadline,
+            jam: cleanJam,
+            price: numPrice,
+            paid: numPaid,
+            balance,
+            status,
+            paymentStatus,
+            pic: picClean,
+            notes: notesClean
+        };
+    }
+
+    // Catat pembayaran (menambahkan ke Total Bayar)
+    async function addPayment(idInput, amount) {
+        const task = await findTaskById(idInput);
+        if (!task) {
+            throw new Error(`Tugas dengan ID ${idInput} tidak ditemukan.`);
+        }
+
+        const addedAmount = parseNumber(amount);
+        const newPaid = task.paid + addedAmount;
+        const newBalance = Math.max(0, task.price - newPaid);
+        const newPaymentStatus = newPaid >= task.price && task.price > 0 ? PAYMENT_STATUS.LUNAS : (newPaid > 0 ? PAYMENT_STATUS.DP : PAYMENT_STATUS.BELUM_BAYAR);
+
+        await sheetsClient.spreadsheets.values.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+                valueInputOption: "USER_ENTERED",
+                data: [
+                    { range: sheetRange(`H${task.rowNumber}`), values: [[newPaid]] },
+                    { range: sheetRange(`I${task.rowNumber}`), values: [[newBalance]] },
+                    { range: sheetRange(`K${task.rowNumber}`), values: [[newPaymentStatus]] }
+                ]
+            }
+        });
+
+        task.paid = newPaid;
+        task.balance = newBalance;
+        task.paymentStatus = newPaymentStatus;
+
+        return { task, addedAmount };
+    }
+
+    // Update status pengerjaan (misal: Selesai, Revisi, Proses)
+    async function updateStatus(idInput, newStatus, notes = null) {
+        const task = await findTaskById(idInput);
+        if (!task) {
+            throw new Error(`Tugas dengan ID ${idInput} tidak ditemukan.`);
+        }
+
+        const data = [{ range: sheetRange(`J${task.rowNumber}`), values: [[newStatus]] }];
+
+        if (notes !== null) {
+            data.push({ range: sheetRange(`M${task.rowNumber}`), values: [[notes]] });
+            task.notes = notes;
+        }
+
+        await sheetsClient.spreadsheets.values.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+                valueInputOption: "USER_ENTERED",
+                data
+            }
+        });
+
+        task.status = newStatus;
+        return task;
+    }
+
+    // Update PIC yang mengerjakan
+    async function updatePic(idInput, newPic) {
+        const task = await findTaskById(idInput);
+        if (!task) {
+            throw new Error(`Tugas dengan ID ${idInput} tidak ditemukan.`);
+        }
+
+        const cleanPic = newPic?.trim() || "-";
+        await sheetsClient.spreadsheets.values.update({
+            spreadsheetId,
+            range: sheetRange(`L${task.rowNumber}`),
+            valueInputOption: "USER_ENTERED",
+            requestBody: {
+                values: [[cleanPic]]
+            }
+        });
+
+        task.pic = cleanPic;
+        return task;
+    }
+
+    // Update catatan tambahan / link drive
+    async function updateNotes(idInput, newNotes) {
+        const task = await findTaskById(idInput);
+        if (!task) {
+            throw new Error(`Tugas dengan ID ${idInput} tidak ditemukan.`);
+        }
+
+        const cleanNotes = newNotes?.trim() || "";
+        await sheetsClient.spreadsheets.values.update({
+            spreadsheetId,
+            range: sheetRange(`M${task.rowNumber}`),
+            valueInputOption: "USER_ENTERED",
+            requestBody: {
+                values: [[cleanNotes]]
+            }
+        });
+
+        task.notes = cleanNotes;
+        return task;
+    }
+
+    // Hapus tugas dari spreadsheet (menghapus seluruh baris)
+    async function deleteTask(idInput) {
+        const task = await findTaskById(idInput);
+        if (!task) {
+            throw new Error(`Tugas dengan ID ${idInput} tidak ditemukan.`);
+        }
+
+        // Dapatkan sheetId (numeric) untuk request deleteDimension
+        const spreadsheet = await sheetsClient.spreadsheets.get({ spreadsheetId });
+        const sheet = spreadsheet.data.sheets.find(
+            (s) => s.properties.title === tasksSheetName
         );
+        if (!sheet) {
+            throw new Error(`Sheet "${tasksSheetName}" tidak ditemukan.`);
+        }
+        const sheetId = sheet.properties.sheetId;
+
+        // Hapus baris (rowNumber adalah 1-indexed, API deleteDimension pakai 0-indexed)
+        await sheetsClient.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+                requests: [
+                    {
+                        deleteDimension: {
+                            range: {
+                                sheetId,
+                                dimension: "ROWS",
+                                startIndex: task.rowNumber - 1,
+                                endIndex: task.rowNumber
+                            }
+                        }
+                    }
+                ]
+            }
+        });
+
+        return task;
     }
 
-    // Cek No WhatsApp di kolom E tab teknisi
-    async function isTechnician(phone) {
-        const response = await sheetsClient.spreadsheets.values.get({ spreadsheetId, range: `'${technicianSheetName}'!E:E` });
-        const rows = response.data.values ?? [];
-        return rows.some((row) => normalizePhone(row[0]) === normalizePhone(phone));
-    }
-
-    return { listTags, listDetails, closeTag, reopenTag, isTechnician };
+    return {
+        getAllTasks,
+        getActiveTasks,
+        findTaskById,
+        addTask,
+        addPayment,
+        updateStatus,
+        updatePic,
+        updateNotes,
+        deleteTask
+    };
 }

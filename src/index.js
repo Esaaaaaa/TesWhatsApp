@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { createAiAssistant } from "./aiAssistant.js";
 import { loadConfig } from "./config.js";
-import { createRedTagRepository } from "./googleSheetsRepository.js";
+import { createTaskRepository } from "./googleSheetsRepository.js";
 import { logger } from "./logger.js";
 import { normalizeMessage } from "./normalizeMessage.js";
 import { processMessage } from "./processMessage.js";
@@ -12,14 +12,16 @@ if (fs.existsSync(".env") && typeof process.loadEnvFile === "function") {
     process.loadEnvFile(".env");
 }
 
-// Titik awal aplikasi
+// Titik awal aplikasi bot WhatsApp Joki Tugas
 async function main() {
     const config = loadConfig();
-    const redTagRepository = createRedTagRepository(config);
-    const aiAssistant = config.geminiApiKey ? createAiAssistant({ apiKey: config.geminiApiKey, model: config.geminiModel, redTagRepository }) : null;
+    const taskRepository = createTaskRepository(config);
+    const aiAssistant = config.geminiApiKey ? createAiAssistant({ apiKey: config.geminiApiKey, model: config.geminiModel, taskRepository }) : null;
 
     if (config.allowedGroupIds.length === 0) {
-        logger.warn("ALLOWED_GROUP_IDS masih kosong, semua pesan akan diabaikan, salin groupId dari log ke .env atau environment variables");
+        logger.info("ALLOWED_GROUP_IDS kosong: Bot dapat digunakan di semua grup dan chat pribadi.");
+    } else {
+        logger.info(`ALLOWED_GROUP_IDS aktif: [${config.allowedGroupIds.join(", ")}]`);
     }
 
     await startWhatsAppClient({
@@ -34,7 +36,8 @@ async function main() {
 
             await processMessage(message, {
                 allowedGroupIds: config.allowedGroupIds,
-                redTagRepository,
+                adminNumbers: config.adminNumbers,
+                taskRepository,
                 aiAssistant,
                 botJids,
                 sendReply

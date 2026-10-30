@@ -1,235 +1,212 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { test } from "node:test";
 import { processMessage } from "../src/processMessage.js";
+import { PROCESSING_STATUS, TASK_STATUS, PAYMENT_STATUS } from "../src/constants.js";
 
-// Data contoh
-const ALLOWED_GROUP_ID = "120363000000000000@g.us";
-const BOT_JID = "6281111111111@s.whatsapp.net";
-const TECHNICIAN_PHONE = "6285855303520";
-const CLOSE_TEXT = "@bot\nNo RT: 24308\nPenanggulangan: Ganti belt\nPIC: Alim";
-const REOPEN_TEXT = "@bot\nNo RT: 24308\nStatus: Open";
-const OPEN_TAG = { rowNumber: 5789, tagNumber: "RT/LINEB/07/2026/24308", closedAt: "" };
-const CLOSED_TAG = { ...OPEN_TAG, closedAt: "12/10/2026" };
-
-// Balasan ringkasan template whatsapp, contoh:
-const summary = (...entries) => `*UPDATE RED TAG*\n_Senin, 12 Okt 2026 · 16:00 WIB_\n\`\`\`${entries.join("\n\n")}\`\`\``;
-
-// Pesan palsu, default close valid
-function createMessage(overrides = {}) {
-    return {
-        messageId: "MSG001",
-        groupId: ALLOWED_GROUP_ID,
-        senderName: "Abu",
-        senderPhone: TECHNICIAN_PHONE,
-        messageText: CLOSE_TEXT,
-        mentionedJids: [BOT_JID],
-        receivedAt: "2026-10-12T16:00:00+07:00",
-        ...overrides
-    };
-}
-
-// Repository dan sendReply palsu, tag disalin supaya data contoh tidak ikut berubah
-function createDependencies({ redTags = [], tags = {}, failOnWrite = false } = {}) {
-    const tagsByType = { redTag: redTags, ...tags };
-    const closedTags = [];
-    const reopenedRows = [];
-    const replies = [];
-
-    // Catat data atau tiru Sheets gagal
-    const write = (target, value) => {
-        if (failOnWrite) {
-            throw new Error("Sheets tidak bisa diakses");
-        }
-        target.push(value);
-    };
-
-    return {
-        closedTags,
-        reopenedRows,
-        replies,
-        allowedGroupIds: [ALLOWED_GROUP_ID],
-        botJids: [BOT_JID],
-        redTagRepository: {
-            listTags: async (type) => (tagsByType[type] ?? []).map((tag) => ({ ...tag })),
-            closeTag: async (type, update) => write(closedTags, { type, ...update }),
-            reopenTag: async (type, rowNumber) => write(reopenedRows, rowNumber),
-            isTechnician: async (phone) => phone === TECHNICIAN_PHONE
+function createMockRepository() {
+    const tasks = [
+        {
+            rowNumber: 2,
+            id: "T1",
+            clientPhone: "6285869199064",
+            taskTitle: "Judul Skripsi",
+            createdAt: "29-10-2026",
+            deadline: "04-11-2026",
+            price: 300000,
+            paid: 150000,
+            balance: 150000,
+            status: TASK_STATUS.PROSES,
+            paymentStatus: PAYMENT_STATUS.DP,
+            pic: "Rian",
+            notes: ""
         },
-        sendReply: async (message, text) => replies.push(text)
+        {
+            rowNumber: 3,
+            id: "T2",
+            clientPhone: "6281383429831",
+            taskTitle: "Metopen",
+            createdAt: "29-10-2026",
+            deadline: "-",
+            price: 200000,
+            paid: 200000,
+            balance: 0,
+            status: TASK_STATUS.SELESAI,
+            paymentStatus: PAYMENT_STATUS.LUNAS,
+            pic: "-",
+            notes: ""
+        }
+    ];
+
+    return {
+        tasks,
+        getAllTasks: async () => [...tasks],
+        getActiveTasks: async () => tasks.filter((t) => t.status !== TASK_STATUS.SELESAI),
+        findTaskById: async (id) => tasks.find((t) => t.id.toLowerCase() === id.toLowerCase()) || null,
+        addTask: async (data) => {
+            const newTask = {
+                id: `T${tasks.length + 1}`,
+                clientPhone: data.clientPhone,
+                taskTitle: data.taskTitle,
+                createdAt: "29-10-2026",
+                deadline: data.deadline,
+                price: Number(data.price),
+                paid: Number(data.paid),
+                balance: Number(data.price) - Number(data.paid),
+                status: TASK_STATUS.PROSES,
+                paymentStatus: Number(data.paid) >= Number(data.price) ? PAYMENT_STATUS.LUNAS : (Number(data.paid) > 0 ? PAYMENT_STATUS.DP : PAYMENT_STATUS.BELUM_BAYAR),
+                pic: data.pic || "-",
+                notes: data.notes || ""
+            };
+            tasks.push(newTask);
+            return newTask;
+        },
+        addPayment: async (id, amount) => {
+            const task = tasks.find((t) => t.id.toLowerCase() === id.toLowerCase());
+            const num = Number(amount);
+            task.paid += num;
+            task.balance = Math.max(0, task.price - task.paid);
+            task.paymentStatus = task.paid >= task.price ? PAYMENT_STATUS.LUNAS : PAYMENT_STATUS.DP;
+            return { task, addedAmount: num };
+        },
+        updateStatus: async (id, newStatus, notes = null) => {
+            const task = tasks.find((t) => t.id.toLowerCase() === id.toLowerCase());
+            task.status = newStatus;
+            if (notes !== null) task.notes = notes;
+            return task;
+        },
+        updatePic: async (id, pic) => {
+            const task = tasks.find((t) => t.id.toLowerCase() === id.toLowerCase());
+            task.pic = pic;
+            return task;
+        },
+        updateNotes: async (id, notes) => {
+            const task = tasks.find((t) => t.id.toLowerCase() === id.toLowerCase());
+            task.notes = notes;
+            return task;
+        }
     };
 }
 
-test("close tag yang masih Open dan balas dengan No RT lengkap", async () => {
-    const dependencies = createDependencies({ redTags: [OPEN_TAG] });
-    const status = await processMessage(createMessage(), dependencies);
+function createBaseMessage(text, isGroup = false) {
+    return {
+        messageId: "MSG_001",
+        chatId: isGroup ? "120363000000000000@g.us" : "6281234567890@s.whatsapp.net",
+        groupId: isGroup ? "120363000000000000@g.us" : null,
+        isGroup,
+        senderName: "Budi",
+        senderPhone: "6281234567890",
+        messageText: text,
+        mentionedJids: [],
+        receivedAt: "2026-10-29T21:00:00+07:00",
+        rawMessage: {}
+    };
+}
 
-    assert.equal(status, "PROCESSED");
-    assert.deepEqual(dependencies.closedTags, [
-        { type: "redTag", rowNumber: 5789, solvedBy: "Alim", solution: "Ganti belt", closedDate: "2026-10-12" }
-    ]);
-    assert.deepEqual(dependencies.replies, [summary("✓ RT/LINEB/07/2026/24308\n  Close · Ganti belt · Alim")]);
+test("perintah /list menampilkan daftar tugas yang masih aktif", async () => {
+    const taskRepository = createMockRepository();
+    let replyText = "";
+    const sendReply = async (_, text) => { replyText = text; };
+
+    const status = await processMessage(createBaseMessage("/list"), {
+        taskRepository,
+        sendReply
+    });
+
+    assert.equal(status, PROCESSING_STATUS.PROCESSED);
+    assert.match(replyText, /LIST TUGAS/);
+    assert.match(replyText, /T1 \| 6285869199064 \| Judul Skripsi \| 04-11-2026/);
+    // T2 yang sudah selesai tidak boleh muncul di list aktif
+    assert.doesNotMatch(replyText, /T2 \|/);
 });
 
-test("buka kembali tag yang sudah Close lewat Status Open", async () => {
-    const dependencies = createDependencies({ redTags: [CLOSED_TAG] });
-    const status = await processMessage(createMessage({ messageText: REOPEN_TEXT }), dependencies);
+test("perintah /tambah menambahkan tugas baru dan membalas dengan ringkasan", async () => {
+    const taskRepository = createMockRepository();
+    let replyText = "";
+    const sendReply = async (_, text) => { replyText = text; };
 
-    assert.equal(status, "PROCESSED");
-    assert.deepEqual(dependencies.reopenedRows, [5789]);
-    assert.deepEqual(dependencies.replies, [summary("✓ RT/LINEB/07/2026/24308\n  Dibuka kembali, status jadi Open")]);
+    const status = await processMessage(
+        createBaseMessage("/tambah 081234567890 | Makalah Bisnis | 31-10-2026 | 250000 | 100000 | Rian"),
+        { taskRepository, sendReply }
+    );
+
+    assert.equal(status, PROCESSING_STATUS.PROCESSED);
+    assert.match(replyText, /TUGAS BERHASIL DITAMBAHKAN/);
+    assert.match(replyText, /Makalah Bisnis/);
+    assert.match(replyText, /Rp 250\.000/);
+    assert.match(replyText, /Rp 100\.000/);
 });
 
-test("proses banyak tag bernomor dalam satu pesan", async () => {
-    const otherOpenTag = { rowNumber: 5790, tagNumber: "RT/LINEB/07/2026/24311", closedAt: "" };
-    const otherClosedTag = { rowNumber: 5791, tagNumber: "RT/LINEB/07/2026/24315", closedAt: "12/10/2026" };
-    const dependencies = createDependencies({ redTags: [OPEN_TAG, otherOpenTag, otherClosedTag] });
-    const messageText = [
-        "@bot",
-        "1. No RT: 24308",
-        "Penanggulangan: Ganti belt",
-        "PIC: Alim",
-        "",
-        "2. No RT: 24311",
-        "Penanggulangan: Ganti bearing",
-        "PIC: Joko",
-        "",
-        "3. No RT: 24315",
-        "Penanggulangan: Setting sensor",
-        "PIC: Alim"
-    ].join("\n");
+test("perintah /bayar mencatat penambahan pembayaran", async () => {
+    const taskRepository = createMockRepository();
+    let replyText = "";
+    const sendReply = async (_, text) => { replyText = text; };
 
-    const status = await processMessage(createMessage({ messageText }), dependencies);
+    const status = await processMessage(
+        createBaseMessage("/bayar T1 150000"),
+        { taskRepository, sendReply }
+    );
 
-    assert.equal(status, "PROCESSED");
-    assert.deepEqual(dependencies.closedTags.map((update) => update.rowNumber), [5789, 5790]);
-    assert.deepEqual(dependencies.replies, [
-        summary(
-            "✓ RT/LINEB/07/2026/24308\n  Close · Ganti belt · Alim",
-            "✓ RT/LINEB/07/2026/24311\n  Close · Ganti bearing · Joko",
-            "✗ 24315\n  Sudah Close sebelumnya"
-        )
-    ]);
+    assert.equal(status, PROCESSING_STATUS.PROCESSED);
+    assert.match(replyText, /PEMBAYARAN DITERIMA/);
+    assert.match(replyText, /LUNAS/);
 });
 
-test("tag yang sama dua kali dalam satu pesan hanya di-close sekali", async () => {
-    const dependencies = createDependencies({ redTags: [OPEN_TAG] });
-    const messageText = `${CLOSE_TEXT}\n${CLOSE_TEXT.replace("@bot\n", "")}`;
+test("perintah /selesai menandai tugas selesai", async () => {
+    const taskRepository = createMockRepository();
+    let replyText = "";
+    const sendReply = async (_, text) => { replyText = text; };
 
-    await processMessage(createMessage({ messageText }), dependencies);
+    const status = await processMessage(
+        createBaseMessage("/selesai T1"),
+        { taskRepository, sendReply }
+    );
 
-    assert.equal(dependencies.closedTags.length, 1);
-    assert.deepEqual(dependencies.replies, [
-        summary("✓ RT/LINEB/07/2026/24308\n  Close · Ganti belt · Alim", "✗ 24308\n  Sudah Close sebelumnya")
-    ]);
+    assert.equal(status, PROCESSING_STATUS.PROCESSED);
+    assert.match(replyText, /TUGAS SELESAI/);
+    assert.equal(taskRepository.tasks[0].status, TASK_STATUS.SELESAI);
 });
 
-test("tag yang sudah Close tidak ditulis ulang", async () => {
-    const dependencies = createDependencies({ redTags: [CLOSED_TAG] });
-    const status = await processMessage(createMessage(), dependencies);
+test("perintah /revisi mengubah status dan menambahkan catatan revisi", async () => {
+    const taskRepository = createMockRepository();
+    let replyText = "";
+    const sendReply = async (_, text) => { replyText = text; };
 
-    assert.equal(status, "INVALID");
-    assert.equal(dependencies.closedTags.length, 0);
-    assert.deepEqual(dependencies.replies, [summary("✗ 24308\n  Sudah Close sebelumnya")]);
+    const status = await processMessage(
+        createBaseMessage("/revisi T1 Bab 2 sitasi kurang"),
+        { taskRepository, sendReply }
+    );
+
+    assert.equal(status, PROCESSING_STATUS.PROCESSED);
+    assert.match(replyText, /STATUS REVISI/);
+    assert.match(replyText, /Bab 2 sitasi kurang/);
+    assert.equal(taskRepository.tasks[0].status, TASK_STATUS.REVISI);
 });
 
-test("close Orange Tag dan WR dalam satu pesan sesuai label", async () => {
-    const orangeTag = { rowNumber: 2880, tagNumber: "OT/LINEC/04/2026/06755", closedAt: "" };
-    const workRequest = { rowNumber: 4929, tagNumber: "194889", closedAt: "" };
-    const dependencies = createDependencies({ tags: { orangeTag: [orangeTag], workRequest: [workRequest] } });
-    const messageText = "@bot\nNo OT: 6755\nPenanggulangan: Pengelasan plat\nPIC: Wahyu\n\nNo WR: 194889\nPenanggulangan: Pasang sensor\nExecutor: Ripal";
+test("perintah /detail menampilkan rincian lengkap tugas", async () => {
+    const taskRepository = createMockRepository();
+    let replyText = "";
+    const sendReply = async (_, text) => { replyText = text; };
 
-    const status = await processMessage(createMessage({ messageText }), dependencies);
+    const status = await processMessage(
+        createBaseMessage("/detail T1"),
+        { taskRepository, sendReply }
+    );
 
-    assert.equal(status, "PROCESSED");
-    assert.deepEqual(dependencies.closedTags, [
-        { type: "orangeTag", rowNumber: 2880, solvedBy: "Wahyu", solution: "Pengelasan plat", closedDate: "2026-10-12" },
-        { type: "workRequest", rowNumber: 4929, solvedBy: "Ripal", solution: "Pasang sensor", closedDate: "2026-10-12" }
-    ]);
+    assert.equal(status, PROCESSING_STATUS.PROCESSED);
+    assert.match(replyText, /DETAIL TUGAS T1/);
+    assert.match(replyText, /Judul Skripsi/);
 });
 
-test("minta No RT lengkap kalau nomor belakang cocok dengan beberapa tag Open", async () => {
-    const otherOpenTag = { rowNumber: 100, tagNumber: "RT/LINEA/01/2025/24308", closedAt: "" };
-    const dependencies = createDependencies({ redTags: [OPEN_TAG, otherOpenTag] });
+test("mengabaikan pesan grup jika tidak diawali slash dan tidak mention bot", async () => {
+    const taskRepository = createMockRepository();
+    let replySent = false;
+    const sendReply = async () => { replySent = true; };
 
-    const status = await processMessage(createMessage(), dependencies);
+    const status = await processMessage(
+        createBaseMessage("halo guys tugasnya gimana", true),
+        { taskRepository, sendReply }
+    );
 
-    assert.equal(status, "INVALID");
-    assert.equal(dependencies.closedTags.length, 0);
-    assert.deepEqual(dependencies.replies, [summary("✗ 24308\n  Ada beberapa data dengan nomor ini, tulis nomor lengkap ya")]);
-});
-
-test("balas tag tidak ditemukan", async () => {
-    const dependencies = createDependencies();
-    const status = await processMessage(createMessage(), dependencies);
-
-    assert.equal(status, "INVALID");
-    assert.deepEqual(dependencies.replies, [summary("✗ 24308\n  Nomor tidak ditemukan, coba cek lagi")]);
-});
-
-test("sebutkan field yang belum diisi saat close", async () => {
-    const dependencies = createDependencies({ redTags: [OPEN_TAG] });
-    const status = await processMessage(createMessage({ messageText: "@bot\nNo RT: 24308\nOleh: Alim" }), dependencies);
-
-    assert.equal(status, "INVALID");
-    assert.equal(dependencies.closedTags.length, 0);
-    assert.deepEqual(dependencies.replies, [summary("✗ 24308\n  Belum lengkap, tolong tambahkan Penanggulangan dan PIC")]);
-});
-
-test("abaikan pesan Red Tag yang tidak mention bot", async () => {
-    const dependencies = createDependencies({ redTags: [OPEN_TAG] });
-    const status = await processMessage(createMessage({ mentionedJids: [] }), dependencies);
-
-    assert.equal(status, "IGNORED");
-    assert.equal(dependencies.replies.length, 0);
-});
-
-test("abaikan chat biasa kalau fitur AI tidak aktif", async () => {
-    const dependencies = createDependencies();
-    const status = await processMessage(createMessage({ messageText: "@bot siap, terima kasih" }), dependencies);
-
-    assert.equal(status, "IGNORED");
-    assert.equal(dependencies.replies.length, 0);
-});
-
-test("abaikan pesan dari grup yang belum diizinkan", async () => {
-    const dependencies = createDependencies({ redTags: [OPEN_TAG] });
-    const status = await processMessage(createMessage({ groupId: "other@g.us" }), dependencies);
-
-    assert.equal(status, "IGNORED");
-    assert.equal(dependencies.closedTags.length, 0);
-});
-
-test("laporkan gagal simpan kalau Google Sheets error", async () => {
-    const dependencies = createDependencies({ redTags: [OPEN_TAG], failOnWrite: true });
-    const status = await processMessage(createMessage(), dependencies);
-
-    assert.equal(status, "ERROR");
-    assert.equal(dependencies.closedTags.length, 0);
-    assert.deepEqual(dependencies.replies, [summary("✗ RT/LINEB/07/2026/24308\n  Gagal menyimpan ke spreadsheet, coba kirim ulang")]);
-});
-
-test("tolak pengirim yang bukan teknisi terdaftar", async () => {
-    const dependencies = createDependencies({ redTags: [OPEN_TAG] });
-    const status = await processMessage(createMessage({ senderPhone: "6289999999999" }), dependencies);
-
-    assert.equal(status, "INVALID");
-    assert.equal(dependencies.closedTags.length, 0);
-    assert.deepEqual(dependencies.replies, ["Nomor Anda belum terdaftar sebagai teknisi. Silakan hubungi admin Aziz untuk mendapatkan bantuan ya😉"]);
-});
-
-test("jawab pertanyaan tanpa No RT dengan AI", async () => {
-    const dependencies = { ...createDependencies(), aiAssistant: { ask: async (question) => `Jawaban: ${question}` } };
-    const status = await processMessage(createMessage({ messageText: "@6281111111111 berapa tag open?" }), dependencies);
-
-    assert.equal(status, "PROCESSED");
-    assert.deepEqual(dependencies.replies, ["Jawaban: berapa tag open?"]);
-});
-
-test("balas AI tidak tersedia kalau AI gagal", async () => {
-    const failingAssistant = { ask: async () => { throw new Error("Kuota habis"); } };
-    const dependencies = { ...createDependencies(), aiAssistant: failingAssistant };
-    const status = await processMessage(createMessage({ messageText: "@6281111111111 berapa tag open?" }), dependencies);
-
-    assert.equal(status, "ERROR");
-    assert.deepEqual(dependencies.replies, ["Maaf, layanan AI sedang mengalami kendala. Silakan coba kembali beberapa saat lagi ya😉"]);
+    assert.equal(status, PROCESSING_STATUS.IGNORED);
+    assert.equal(replySent, false);
 });

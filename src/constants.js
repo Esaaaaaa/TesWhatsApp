@@ -1,4 +1,4 @@
-// Zona waktu pabrik
+// Zona waktu WIB
 export const ASIA_JAKARTA = "Asia/Jakarta";
 
 // Status hasil proses pesan
@@ -9,12 +9,18 @@ export const PROCESSING_STATUS = {
     ERROR: "ERROR"
 };
 
-// Nama dan label tiap sheet
-export const SHEET_TYPES = {
-    redTag: { name: "Red Tag", labels: { TAG_NUMBER: "No RT", SOLUTION: "Penanggulangan", SOLVED_BY: "PIC" } },
-    orangeTag: { name: "Orange Tag", labels: { TAG_NUMBER: "No OT", SOLUTION: "Penanggulangan", SOLVED_BY: "PIC" } },
-    workRequest: { name: "WR", labels: { TAG_NUMBER: "No WR", SOLUTION: "Penanggulangan", SOLVED_BY: "Executor" } }
+// Status pengerjaan tugas
+export const TASK_STATUS = {
+    ANTRE: "Antre",
+    PROSES: "Proses",
+    REVISI: "Revisi",
+    SELESAI: "Selesai",
+    BATAL: "Batal"
 };
 
-// Label reopen, bukan field wajib
-export const STATUS_LABEL = "Status";
+// Status pembayaran
+export const PAYMENT_STATUS = {
+    BELUM_BAYAR: "Belum Bayar",
+    DP: "DP",
+    LUNAS: "Lunas"
+};

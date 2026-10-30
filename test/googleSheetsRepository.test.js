@@ -1,14 +1,28 @@
+import test from "node:test";
 import assert from "node:assert/strict";
-import { test } from "node:test";
-import { isSameTag } from "../src/googleSheetsRepository.js";
+import { formatRupiah, normalizePhone, normalizeTaskId, parseNumber } from "../src/googleSheetsRepository.js";
 
-test("No Tag lengkap harus sama, huruf besar kecil dan spasi diabaikan", () => {
-    assert.equal(isSameTag("RT/LINEB/07/2026/24308", " rt/lineb/07/2026/24308 "), true);
-    assert.equal(isSameTag("RT/LINEB/07/2026/24308", "RT/LINEB/07/2026/24309"), false);
+test("normalizePhone mengubah berbagai format nomor ke awalan 62", () => {
+    assert.equal(normalizePhone("081234567890"), "6281234567890");
+    assert.equal(normalizePhone("+62 812-3456-7890"), "6281234567890");
+    assert.equal(normalizePhone("6281234567890"), "6281234567890");
 });
 
-test("nomor saja dicocokkan ke nomor belakang tag, nol di depan diabaikan", () => {
-    assert.equal(isSameTag("RT/LINED1POUCH/04/2026/08530", "8530"), true);
-    assert.equal(isSameTag("RT/LINEB/07/2026/24308", "4308"), false);
-    assert.equal(isSameTag("No Tag", "24308"), false);
+test("formatRupiah memformat angka dengan pemisah ribuan titik", () => {
+    assert.equal(formatRupiah(250000), "250.000");
+    assert.equal(formatRupiah(1500000), "1.500.000");
+    assert.equal(formatRupiah(0), "0");
+});
+
+test("parseNumber membersihkan teks menjadi integer", () => {
+    assert.equal(parseNumber("Rp 250.000"), 250000);
+    assert.equal(parseNumber("150000"), 150000);
+    assert.equal(parseNumber(""), 0);
+});
+
+test("normalizeTaskId menstandarkan variasi ID tugas", () => {
+    assert.equal(normalizeTaskId("t1"), "T1");
+    assert.equal(normalizeTaskId("T01"), "T1");
+    assert.equal(normalizeTaskId("T014"), "T14");
+    assert.equal(normalizeTaskId("5"), "T5");
 });

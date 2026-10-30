@@ -21,7 +21,8 @@ export async function startWhatsAppClient({ phoneNumber, onMessage, authStateDir
 
     // Balas sambil quote pesan
     async function sendReply(message, text) {
-        await socket.sendMessage(message.groupId, { text }, { quoted: message.rawMessage });
+        const targetJid = message.chatId || message.groupId;
+        await socket.sendMessage(targetJid, { text }, { quoted: message.rawMessage });
     }
 
     // Minta kode pairing

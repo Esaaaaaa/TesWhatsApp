@@ -12,32 +12,40 @@ function extractMessageText(content) {
     return content?.conversation ?? content?.extendedTextMessage?.text ?? null;
 }
 
-// Nomor HP pengirim, grup LID pakai participantAlt
+// Nomor HP pengirim (mendukung DM dan grup)
 function extractSenderPhone(key) {
+    if (!isJidGroup(key.remoteJid)) {
+        return key.remoteJid ? jidNormalizedUser(key.remoteJid).split("@")[0] : null;
+    }
     const phoneJid = [key.participant, key.participantAlt].find((jid) => jid?.endsWith("@s.whatsapp.net"));
     return phoneJid ? jidNormalizedUser(phoneJid).split("@")[0] : null;
 }
 
-// Ubah pesan Baileys, null kalau bukan teks grup
+// Ubah pesan Baileys menjadi objek terstandar, null jika pesan bukan teks valid atau dari bot sendiri
 export function normalizeMessage(rawMessage) {
     const { key } = rawMessage;
 
-    if (key.fromMe || !isJidGroup(key.remoteJid)) {
+    if (key.fromMe) {
         return null;
     }
 
     const messageText = extractMessageText(rawMessage.message);
-
     if (!messageText) {
         return null;
     }
 
+    const isGroup = isJidGroup(key.remoteJid);
+    const chatId = key.remoteJid;
+    const senderPhone = extractSenderPhone(key);
+
     return {
         messageId: key.id,
-        groupId: key.remoteJid,
-        senderName: rawMessage.pushName ?? key.participant ?? "",
-        senderPhone: extractSenderPhone(key),
-        messageText,
+        chatId,
+        groupId: isGroup ? chatId : null,
+        isGroup,
+        senderName: rawMessage.pushName ?? (isGroup ? key.participant ?? "" : ""),
+        senderPhone,
+        messageText: messageText.trim(),
         mentionedJids: (rawMessage.message?.extendedTextMessage?.contextInfo?.mentionedJid ?? []).map(jidNormalizedUser),
         receivedAt: toJakartaIsoString(new Date(Number(rawMessage.messageTimestamp) * 1000)),
         rawMessage
