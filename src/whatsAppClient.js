@@ -51,14 +51,17 @@ export async function startWhatsAppClient({ phoneNumber, onMessage, authStateDir
 
         socket.ev.on("creds.update", saveCreds);
 
-        socket.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
+        socket.ev.on("connection.update", async ({ connection, lastDisconnect, qr }) => {
             if (qr && !phoneNumber) {
                 showQrCode(qr);
             }
 
-            if (qr && phoneNumber && !isPairingCodeRequested) {
+            if (phoneNumber && !isPairingCodeRequested && !socket.authState.creds.registered) {
                 isPairingCodeRequested = true;
-                requestPairingCode();
+                // Tunggu 3 detik agar socket stabil sebelum meminta kode pairing
+                setTimeout(async () => {
+                    await requestPairingCode();
+                }, 3000);
             }
 
             if (connection === "open") {
