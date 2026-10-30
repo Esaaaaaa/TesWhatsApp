@@ -205,6 +205,37 @@ export function createTaskRepository({ spreadsheetId, tasksSheetName = "Sheet1",
         return { task, addedAmount };
     }
 
+    // Tandai langsung lunas penuh (membayar seluruh sisa tagihan)
+    async function markAsPaidOff(idInput) {
+        const task = await findTaskById(idInput);
+        if (!task) {
+            throw new Error(`Tugas dengan ID ${idInput} tidak ditemukan.`);
+        }
+
+        const remainingBalance = task.balance;
+        const newPaid = task.price;
+        const newBalance = 0;
+        const newPaymentStatus = PAYMENT_STATUS.LUNAS;
+
+        await sheetsClient.spreadsheets.values.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+                valueInputOption: "USER_ENTERED",
+                data: [
+                    { range: sheetRange(`H${task.rowNumber}`), values: [[newPaid]] },
+                    { range: sheetRange(`I${task.rowNumber}`), values: [[newBalance]] },
+                    { range: sheetRange(`K${task.rowNumber}`), values: [[newPaymentStatus]] }
+                ]
+            }
+        });
+
+        task.paid = newPaid;
+        task.balance = newBalance;
+        task.paymentStatus = newPaymentStatus;
+
+        return { task, remainingBalance };
+    }
+
     // Update status pengerjaan (misal: Selesai, Revisi, Proses)
     async function updateStatus(idInput, newStatus, notes = null) {
         const task = await findTaskById(idInput);
@@ -318,6 +349,7 @@ export function createTaskRepository({ spreadsheetId, tasksSheetName = "Sheet1",
         findTaskById,
         addTask,
         addPayment,
+        markAsPaidOff,
         updateStatus,
         updatePic,
         updateNotes,

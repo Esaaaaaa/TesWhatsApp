@@ -3,6 +3,7 @@ import {
     buildCompletedMessage,
     buildHelpMessage,
     buildNotAdminMessage,
+    buildPaidOffMessage,
     buildPaymentMessage,
     buildRevisionMessage,
     buildTaskAddedMessage,
@@ -167,12 +168,23 @@ export async function processMessage(message, {
             if (command === "/bayar") {
                 const parts = args.split(/\s+/).filter(Boolean);
                 if (parts.length < 2) {
-                    await sendReply(message, "⚠️ Format salah!\nContoh: `/bayar T1 150000`");
+                    await sendReply(message, "⚠️ Format salah!\nContoh: `/bayar T1 150000`\nAtau untuk langsung lunas: `/lunas T1`");
                     return PROCESSING_STATUS.INVALID;
                 }
                 const [idInput, amountRaw] = parts;
                 const { task, addedAmount } = await taskRepository.addPayment(idInput, amountRaw);
                 await sendReply(message, buildPaymentMessage(task, addedAmount));
+                return PROCESSING_STATUS.PROCESSED;
+            }
+
+            // Tandai langsung lunas: /lunas <ID>
+            if (command === "/lunas") {
+                if (!args) {
+                    await sendReply(message, "⚠️ Tolong sebutkan ID tugas, contoh: `/lunas T1`");
+                    return PROCESSING_STATUS.INVALID;
+                }
+                const { task, remainingBalance } = await taskRepository.markAsPaidOff(args);
+                await sendReply(message, buildPaidOffMessage(task, remainingBalance));
                 return PROCESSING_STATUS.PROCESSED;
             }
 

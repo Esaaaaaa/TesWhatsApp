@@ -64,6 +64,18 @@ export function buildPaymentMessage(task, addedAmount) {
     ].join("\n");
 }
 
+// Balasan setelah tugas ditandai langsung lunas
+export function buildPaidOffMessage(task, remainingBalance) {
+    return [
+        "🎉 *PEMBAYARAN LUNAS*",
+        `ID Tugas  : ${task.id} (${task.taskTitle})`,
+        `Pelunasan : +Rp ${formatRupiah(remainingBalance)}`,
+        `Total Byr : Rp ${formatRupiah(task.paid)} / Rp ${formatRupiah(task.price)}`,
+        "Sisa      : Rp 0",
+        "Status    : LUNAS ✅"
+    ].join("\n");
+}
+
 // Balasan saat tugas ditandai selesai
 export function buildCompletedMessage(task) {
     return [
@@ -117,8 +129,10 @@ export function buildHelpMessage() {
         "   _Contoh dengan jam: /tambah 081234567890 - Makalah - 31-10-2026 - 20:00 - 250000 - 100000 - Rian_",
         "",
         "3. *Catat Pembayaran*",
-        "   `/bayar <ID> <Nominal>`",
-        "   _Contoh: /bayar T1 150000_",
+        "   • Bayar cicilan/DP: `/bayar <ID> <Nominal>`",
+        "     _Contoh: /bayar T1 150000_",
+        "   • Langsung lunas: `/lunas <ID>`",
+        "     _Contoh: /lunas T1_",
         "",
         "4. *Tandai Selesai*",
         "   `/selesai <ID>`",
