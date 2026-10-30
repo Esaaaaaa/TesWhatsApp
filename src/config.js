@@ -9,7 +9,18 @@ export function loadConfig(env = process.env) {
     let rawJson = env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
     const credentialsPath = env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
 
-    // Jika user mem-paste teks JSON langsung ke GOOGLE_APPLICATION_CREDENTIALS
+    // 1. Cek jika user memasukkan format BASE64
+    const base64Input = env.GOOGLE_SERVICE_ACCOUNT_BASE64?.trim() || (credentialsPath && !credentialsPath.startsWith("{") && !credentialsPath.endsWith(".json") && credentialsPath.length > 100 ? credentialsPath : null);
+    if (base64Input) {
+        try {
+            const decoded = Buffer.from(base64Input, "base64").toString("utf-8");
+            rawJson = decoded;
+        } catch (e) {
+            // lanjut ke pengecekan biasa
+        }
+    }
+
+    // 2. Jika user mem-paste teks JSON langsung
     if (!rawJson && credentialsPath?.startsWith("{")) {
         rawJson = credentialsPath;
     }
@@ -18,8 +29,10 @@ export function loadConfig(env = process.env) {
         try {
             googleCredentials = JSON.parse(rawJson);
             if (googleCredentials?.private_key) {
-                // Perbaiki kemungkinan double escaping atau newline yang rusak dari Railway env
-                googleCredentials.private_key = googleCredentials.private_key.replace(/\\n/g, "\n");
+                // Rapikan newline jika ter-escape ganda atau ada spasi rusak
+                googleCredentials.private_key = googleCredentials.private_key
+                    .replace(/\\n/g, "\n")
+                    .replace(/\\r/g, "");
             }
         } catch (error) {
             throw new Error(`Kredensial Google Service Account bukan format JSON yang valid: ${error.message}`);
