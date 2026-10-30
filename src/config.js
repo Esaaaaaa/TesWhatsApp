@@ -17,6 +17,10 @@ export function loadConfig(env = process.env) {
     if (rawJson) {
         try {
             googleCredentials = JSON.parse(rawJson);
+            if (googleCredentials?.private_key) {
+                // Perbaiki kemungkinan double escaping atau newline yang rusak dari Railway env
+                googleCredentials.private_key = googleCredentials.private_key.replace(/\\n/g, "\n");
+            }
         } catch (error) {
             throw new Error(`Kredensial Google Service Account bukan format JSON yang valid: ${error.message}`);
         }

@@ -70,6 +70,16 @@ export async function processMessage(message, {
                 return PROCESSING_STATUS.PROCESSED;
             }
 
+            // Cek ID grup saat ini
+            if (command === "/idgrup" || command === "/groupid") {
+                if (!isGroup) {
+                    await sendReply(message, "⚠️ Perintah ini hanya bisa digunakan di dalam grup WhatsApp.");
+                    return PROCESSING_STATUS.INVALID;
+                }
+                await sendReply(message, `📌 *ID Grup ini:*\n\`${groupId}\`\n\nSalin ID di atas dan masukkan ke *ALLOWED_GROUP_IDS* di Railway agar bot hanya aktif di grup ini.`);
+                return PROCESSING_STATUS.PROCESSED;
+            }
+
             // Lihat daftar tugas aktif
             if (["/list", "/tugas"].includes(command)) {
                 const isAll = args.toLowerCase() === "all";
